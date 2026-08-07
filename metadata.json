@@ -1,0 +1,6 @@
+{
+  "name": "قرمشة - المنيو المصري الأصلي للبروستد والمشويات",
+  "description": "منيو قائمة طعام تفاعلية لوجبات الدجاج المقلي، البروستد، المشويات، والساندوتشات بثيم مصري راقي وأصيل",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
