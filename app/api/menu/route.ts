@@ -1,64 +1,44 @@
+import { getCloudflareContext } from '@opennextjs/cloudflare';
 import { NextRequest, NextResponse } from 'next/server';
 import { MENU_ITEMS, MenuItem } from '../../../data/menuData';
 import { ensureUniqueMenuItems } from '../../../lib/excelMenu';
 
-// In-memory fallback for local development or before KV binding is populated
-declare global {
-  var __qarmasha_menu_store: MenuItem[] | undefined;
-  var MENU_KV: any;
-}
+export const dynamic = 'force-dynamic';
 
-// Helper to get KV binding safely in Cloudflare Workers / OpenNext runtime
-async function getMenuKV(): Promise<any> {
-  // 1. Direct global binding
-  if (typeof globalThis !== 'undefined' && globalThis.MENU_KV) {
-    return globalThis.MENU_KV;
-  }
-  // 2. process.env binding
-  if (typeof process !== 'undefined' && (process.env as any).MENU_KV) {
-    return (process.env as any).MENU_KV;
-  }
-  // 3. Try @opennextjs/cloudflare getCloudflareContext
+async function getMenuKV() {
   try {
-    const { getCloudflareContext } = await import('@opennextjs/cloudflare');
-    const ctx = await getCloudflareContext();
-    if (ctx && ctx.env && (ctx.env as any).MENU_KV) {
-      return (ctx.env as any).MENU_KV;
+    const { env } = getCloudflareContext();
+    const kv = (env as Record<string, unknown>).MENU_KV;
+    if (kv && typeof kv === 'object') {
+      return kv as {
+        get: (key: string, type?: 'json') => Promise<unknown>;
+        put: (key: string, value: string) => Promise<void>;
+      };
     }
   } catch {
-    // Not running inside @opennextjs/cloudflare context or module not available
+    // Local development or an environment without the binding.
   }
+
   return null;
 }
 
 export async function GET() {
   try {
     const kv = await getMenuKV();
-    if (kv && typeof kv.get === 'function') {
+
+    if (kv) {
       const stored = await kv.get('qarmasha_menu', 'json');
       if (stored && Array.isArray(stored) && stored.length > 0) {
         return NextResponse.json({
           success: true,
           source: 'cloudflare_kv',
           count: stored.length,
-          items: ensureUniqueMenuItems(stored),
+          items: ensureUniqueMenuItems(stored as MenuItem[]),
           updatedAt: new Date().toISOString(),
         });
       }
     }
 
-    // Fallback to in-memory store if set
-    if (globalThis.__qarmasha_menu_store && globalThis.__qarmasha_menu_store.length > 0) {
-      return NextResponse.json({
-        success: true,
-        source: 'server_memory',
-        count: globalThis.__qarmasha_menu_store.length,
-        items: ensureUniqueMenuItems(globalThis.__qarmasha_menu_store),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    // Default fallback
     return NextResponse.json({
       success: true,
       source: 'default_static',
@@ -66,11 +46,11 @@ export async function GET() {
       items: ensureUniqueMenuItems(MENU_ITEMS),
       updatedAt: new Date().toISOString(),
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
       {
         success: false,
-        error: err?.message || 'Failed to fetch menu',
+        error: err instanceof Error ? err.message : 'Failed to fetch menu',
         items: ensureUniqueMenuItems(MENU_ITEMS),
       },
       { status: 500 }
@@ -81,7 +61,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { items, action } = body;
+    const { items, action } = body as { items?: MenuItem[]; action?: string };
 
     let updatedMenu: MenuItem[];
 
@@ -102,31 +82,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Save to memory store
-    globalThis.__qarmasha_menu_store = updatedMenu;
-
-    // Save to Cloudflare KV if available
-    let kvSaved = false;
     const kv = await getMenuKV();
-    if (kv && typeof kv.put === 'function') {
-      await kv.put('qarmasha_menu', JSON.stringify(updatedMenu));
-      kvSaved = true;
+
+    if (!kv) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Cloudflare KV binding MENU_KV is not available. Bind the KV namespace to this Worker first.',
+        },
+        { status: 503 }
+      );
     }
+
+    await kv.put('qarmasha_menu', JSON.stringify(updatedMenu));
 
     return NextResponse.json({
       success: true,
-      kvSaved,
-      source: kvSaved ? 'cloudflare_kv' : 'server_memory',
+      kvSaved: true,
+      source: 'cloudflare_kv',
       count: updatedMenu.length,
       items: updatedMenu,
-      message: kvSaved
-        ? 'تم حفظ وتحديث المنيو سحابياً على Cloudflare KV بنجاح! التغيير يظهر فوراً لجميع الزوار.'
-        : 'تم حفظ وتحديث المنيو في الخادم بنجاح!',
+      message: 'تم حفظ وتحديث المنيو سحابياً على Cloudflare KV بنجاح! التغيير يظهر لجميع الزوار.',
       updatedAt: new Date().toISOString(),
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { success: false, error: err?.message || 'Failed to save menu' },
+      { success: false, error: err instanceof Error ? err.message : 'Failed to save menu' },
       { status: 500 }
     );
   }
