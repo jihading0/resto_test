@@ -105,6 +105,20 @@ export default function AdminPage() {
     } catch {
       // Fallback
     }
+
+    // Fetch live global menu from Cloudflare KV / Server API
+    fetch('/api/menu')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.items) && data.items.length > 0) {
+          const uniqueItems = ensureUniqueMenuItems(data.items);
+          setMenuItems(uniqueItems);
+          localStorage.setItem('qarmasha_excel_menu', JSON.stringify(uniqueItems));
+        }
+      })
+      .catch(() => {
+        // Fallback
+      });
   }, []);
 
   // Get current stored password or default
@@ -115,12 +129,30 @@ export default function AdminPage() {
     return 'qarmasha2026';
   };
 
-  // Helper to persist updated menu
-  const saveMenuItems = (updatedMenu: MenuItem[], successText: string) => {
+  // Helper to persist updated menu globally via Cloudflare KV API & LocalStorage
+  const saveMenuItems = async (updatedMenu: MenuItem[], successText: string) => {
     const uniqueMenu = ensureUniqueMenuItems(updatedMenu);
     setMenuItems(uniqueMenu);
     localStorage.setItem('qarmasha_excel_menu', JSON.stringify(uniqueMenu));
-    setStatusMessage({ type: 'success', text: successText });
+
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: uniqueMenu }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const cloudMsg = data.kvSaved
+          ? 'تم الحفظ سحابياً على Cloudflare KV بنجاح! التغيير يظهر لجميع الزوار فوراً.'
+          : 'تم الحفظ في الخادم السحابي بنجاح!';
+        setStatusMessage({ type: 'success', text: `${successText} — ${cloudMsg}` });
+      } else {
+        setStatusMessage({ type: 'error', text: data.error || 'حدث خطأ أثناء الحفظ السحابي' });
+      }
+    } catch {
+      setStatusMessage({ type: 'success', text: `${successText} (تم الحفظ محلياً)` });
+    }
   };
 
   // Handle Login submission

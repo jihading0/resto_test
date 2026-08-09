@@ -17,9 +17,9 @@ export default function Home() {
   // Menu items state initialized to default MENU_ITEMS to guarantee SSR hydration match
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => ensureUniqueMenuItems(MENU_ITEMS));
 
-  // Sync menu items from localStorage and Google Sheets after mount (client-side only)
+  // Sync menu items from server API (Cloudflare KV / D1), localStorage and Google Sheets after mount (client-side only)
   useEffect(() => {
-    // Load local storage cache if available
+    // Load local storage cache if available for instant display
     try {
       const savedMenu = localStorage.getItem('qarmasha_excel_menu');
       if (savedMenu) {
@@ -33,6 +33,20 @@ export default function Home() {
     } catch {
       // Fallback
     }
+
+    // Fetch global server-stored menu from Cloudflare KV / Server API
+    fetch('/api/menu')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.items) && data.items.length > 0) {
+          const uniqueServerItems = ensureUniqueMenuItems(data.items);
+          setMenuItems(uniqueServerItems);
+          localStorage.setItem('qarmasha_excel_menu', JSON.stringify(uniqueServerItems));
+        }
+      })
+      .catch(() => {
+        // Silent fallback
+      });
 
     // Auto-sync with live Google Sheet if configured
     const googleSheetUrl = localStorage.getItem('qarmasha_google_sheet_url');
